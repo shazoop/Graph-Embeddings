@@ -1,16 +1,14 @@
 import numpy as np
 import torch
+import random
 
-def embed_to_device(ent_code,rel_code, ent_embeddings, rel_embeddings, device):
-    '''
-    Given the dictionaries created by "get_embedding", will load them onto the appropriate device
-    '''
+def embed_to_device(nbd_embeddings, ent_code, rel_code, device):
     ent_embeddings = torch.from_numpy(np.stack(list(ent_code.values()),0))
     rel_embeddings = torch.from_numpy(np.stack(list(rel_code.values()),0))
     ent_embeddings = ent_embeddings.to(device)
     rel_embeddings = rel_embeddings.to(device)
-    nbd_embeddings = torch.from_numpy(embeddings).to(device) 
-    return ent_embeddings, rel_embeddings, ent_embeddings, rel_embeddings, ent_embeddings
+    nbd_embeddings = torch.from_numpy(nbd_embeddings).to(device) 
+    return nbd_embeddings, ent_embeddings, rel_embeddings
 
 def tch_projmatrix(ent, ent_embeddings):
     '''
@@ -43,25 +41,42 @@ def tch_score(edge,ent_embeddings, rel_embeddings, nbd_embeddings, ent_id, rel_i
     
     #Generate the projection matrices for the given head
     proj = tch_projmatrix(head_embed, ent_embeddings)
-    Frob_norm = torch.norm(head_nbd)**2
+    Frob_norm_sq = (torch.norm(head_nbd)**2).cpu().item()
     #Generate the 
     
     #Compute the graph homomorphism coeff
-    x = torch.einsum('nij,jk -> nik',proj,head_nbd) #left multiply by projection matrix
-    x = torch.einsum('nij,nkj -> nik',x,proj) #right multiply by transpose
+    x1 = torch.einsum('nij,jk -> nik',proj,head_nbd) #left multiply by projection matrix
+    x2 = torch.einsum('ij,nkj -> nik',head_nbd,proj) #right multiply by transpose projection
+    x = x1 + x2
     res = torch.bmm(x.permute(0,2,1),nbd_embed_norel)
-    coeff = (1/Frob_norm)*torch.einsum('nii -> n',res) #number of matching edges
+    coeff = (1/(Frob_norm_sq + 1e-3))*torch.einsum('nii -> n',res) #number of matching edges
     
     #Get the top k
     (val,ix) = torch.topk(coeff,k)
-    edge_coeff = torch.zeros(k-1).to(device)
+    edge_coeff = torch.zeros(k-1)
     for i in range(1,k): #ignore top match, since that's likely to be nbd_embedding of head itself
         curr_ix = ix[i].cpu().item()
-        edge_coeff[i-1] = torch.einsum('i,ij,j->',head_embed,nbd_embeddings[curr_ix],tail_embed).cpu().item()
+        edge_coeff[i-1] = torch.einsum('i,ij,j->',ent_embeddings[curr_ix],nbd_embeddings[curr_ix],tail_embed).cpu().item()
+#         edge_coeff = 2*edge_coeff.clamp(min=0.,max=1.) - 1
     
     #Compute score by weighting each score (-1,1) by softmax of the similarities
-    score = torch.dot(torch.nn.functional.softmax(val[1:],dim=0).float(),edge_coeff)
+    score = torch.dot(val[1:].float().cpu(),edge_coeff.cpu())
+
     
-    return score
+    return score, val, edge_coeff, Frob_norm_sq
     
+def test(num_batch, ent_embeddings, rel_embeddings, nbd_embeddings, ent_id, rel_id, k, edge_set, rel_tensor= False):
+    edges = list(edge_set['test.txt'])
+    batch = random.sample(edges,num_batch)
+    ttl_score = 0
+    num_edges = 0
+    
+    for e in batch:
+        score, _ , _, Frob_norm_sq = tch_score(e,ent_embeddings, rel_embeddings, nbd_embeddings, ent_id, rel_id, k, rel_tensor)
+        if Frob_norm_sq <= 1e-3:
+            continue
+        ttl_score = ttl_score + score.cpu().item()
+        num_edges = num_edges + 1
+    
+    return ttl_score/num_edges
     
