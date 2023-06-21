@@ -1,0 +1,5 @@
+FB15k_127/Release/valid.txt filter=lfs diff=lfs merge=lfs -text
+FB15k_127/Release/test.txt filter=lfs diff=lfs merge=lfs -text
+FB15k_127/Release/train.txt filter=lfs diff=lfs merge=lfs -text
+FB15k_127/Release/text_cvsc.txt filter=lfs diff=lfs merge=lfs -text
+FB15k_127/Release/text_emnlp.txt filter=lfs diff=lfs merge=lfs -text
